@@ -1,18 +1,10 @@
 # DDA Statistical analysis to identify differential enrichment at peptide level upon LiP-MS experiments using DEP. 
 # by Jhon Venegas-Molina, 14/09/2021
-# This script is based on the original DEP script (https://bioconductor.org/packages/release/bioc/vignettes/DEP/inst/doc/DEP.R) with several mofidications to allow LiP-MS analysis. 
-# Package: DEP 1.12.0
+# This script is based on the original DEP script (https://bioconductor.org/packages/release/bioc/vignettes/DEP/inst/doc/DEP.R) with several modifications to allow LiP-MS analysis. 
+# Package: DEP 1.14.0
 # http://bioconductor.org/packages/release/bioc/html/DEP.html
 
-## ----required packages--------------------------------------------------------
-suppressPackageStartupMessages({
-  library("BiocStyle")
-  library("DEP")
-  library("dplyr")
-})
-
-## ----install------------------------------------------------------------------
-#  
+## ----install DEP--------------------------------------------------------------
 #  if (!requireNamespace("BiocManager", quietly=TRUE))
 #      install.packages("BiocManager")
 #  BiocManager::install("DEP")
@@ -20,46 +12,106 @@ suppressPackageStartupMessages({
 #  library("DEP")
 #  
 
-## ----prepare MaxQuant output files for DEP analysis---------------------------
-# Use the "peptides.text" output file from the MaxQuant analysis
+## ----required packages--------------------------------------------------------
+suppressPackageStartupMessages({
+  library("BiocStyle")
+  library("DEP")
+  library("tidyr")
+  library("dplyr")
+})
+
+## ----Prepare MaxQuant output files for DEP analysis---------------------------
+# Load the "peptides.txt" output file from the MaxQuant analysis
+data_peptides <- read.delim("peptides.txt")
+
+# Avoid spaces in column names, therefore, replace spaces with a dot using make.names function
+names(data_peptides) <- make.names(names(data_peptides), unique=TRUE)
+
+# Also spaces in column names could be replaced with underscore 
+# names(data_peptides) <- gsub(" ", "_", names(data_peptides))
+
 # Create a new column called "name". In this column, concatenate the protein name + sequence (e.g. Q8VYG9_LNVDQNPLVVPPEEVVK)
-# Change name of Intensities columns to avoid spaces (add "_" instead), for example "Intensity 25mM_ATP_1" for "Intensity_25mM_ATP_1
-# Deleted all the LFQ intensities and the column called "intensities" to avoid errors
-# Change name of column "Unique (Proteins)" for "Unique_Proteins" to avoid confusion with "Unique." function of DEP
-# Make a .txt file with the experimental design (e.g "LiP_MS_exp_design.txt"). It should contain 3 columns. One for "label" with the name of each sample, second "condition" indicating the treatment of each sample, and third "replicate" indicating the number of replicate 
-# Change "id" column to "ID"
-# Save file as .txt. and give a new name (e.g."Peptides_modified_01.txt")
+data_edited <- data_peptides %>%
+  unite("name", c(Proteins, Sequence), remove = FALSE)
 
-## ----load data----------------------------------------------------------------
-# Loading a package required for data handling
-library("dplyr")
+# Change "id" column to "ID", this is important for the generation of a Summarized Experiment object downstream
+names(data_edited)[names(data_edited) == "id"] <- "ID"
 
-data <- read.delim("Peptides_modified_01.txt")
+# Write a data frame with the experimental design. It should contain 3 columns. One for "label" with the name of each sample, second "condition" indicating the treatment corresponding to each sample, and third "replicate" indicating the number of replicate 
+LiP_MS_exp_design <- data.frame(label = c("MOCK_1",
+                           "MOCK_2",
+                           "MOCK_3",
+                           "MOCK_4",
+                           "Phe_C1_1",
+                           "Phe_C1_2",
+                           "Phe_C1_3",
+                           "Phe_C1_4",
+                           "Phe_C2_1",
+                           "Phe_C2_2",
+                           "Phe_C2_3",
+                           "Phe_C2_4"),
+                 condition = c("MOCK",
+                               "MOCK",
+                               "MOCK",
+                               "MOCK",
+                               "Phe_C1",
+                               "Phe_C1",
+                               "Phe_C1",
+                               "Phe_C1",
+                               "Phe_C2",
+                               "Phe_C2",
+                               "Phe_C2",
+                               "Phe_C2"),
+                 replicate = c(1,2,3,4)
+)
+
+# Check that the experimental design data frame is correct
+print (LiP_MS_exp_design)
+
+# Example:
+# label       condition   replicate
+#    MOCK_1      MOCK         1
+#    MOCK_2      MOCK         2
+#    MOCK_3      MOCK         3
+#    MOCK_4      MOCK         4
+#   Phe_C1_1    Phe_C1         1
+#   Phe_C1_2    Phe_C1         2
+#   Phe_C1_3    Phe_C1         3
+#   Phe_C1_4    Phe_C1         4
+#   Phe_C2_1    Phe_C2         1
+#   Phe_C2_2    Phe_C2         2
+#   Phe_C2_3    Phe_C2         3
+#   Phe_C2_4    Phe_C2         4
+
+## ----Data processing----------------------------------------------------------
+data <- data_edited
+
+# Check that data was loaded correctly
 head(data)
 dim(data)
 
-# Check that the data in the columns of intensities corresponds to the class "numeric". Following is an example to check the 102th column corresponding to a Intensity of a treatment
-class(data[,102])
+# Check that data in the intensities columns corresponds to the class "numeric"
 colnames(data) # To identify the number of columns corresponding to intensities
 
-# Filter for contaminant proteins, decoy database hits, and no unique peptides, which are indicated by "+" in the columns "Potential.contaminants", "Reverse", and "no" in "Unique..Proteins" respectively. 
+# Example to check the 75th column corresponding to a Intensity of a treatment
+class(data[,75])
+
+# Filter contaminant proteins, decoy database hits, and no unique peptides, which are indicated by "+" in the columns "Potential.contaminants", "Reverse", and "no" in "Unique..Proteins" respectively 
 data <- filter(data, Reverse != "+", Potential.contaminant != "+", Unique..Proteins. != "no")
 
-## ----new dimension----------------------------------------------------------------
+# Check new dimensions of the data
 dim(data)
 
-## ----unique-------------------------------------------------------------------
-# Are there any duplicated gene names?
-data$ProteinName_FullPeptideName %>% duplicated() %>% any()
+# Check if are there any duplicated names?
+data$name %>% duplicated() %>% any()
 
-## ----expdesign----------------------------------------------------------------
+## ----Data preparation---------------------------------------------------------
 # Display experimental design
-design <- read.delim("LiP_MS_exp_design.txt")
+design <- LiP_MS_exp_design
 knitr::kable(design)
 
-## ----to_exprset---------------------------------------------------------------
-# Generate a SummarizedExperiment object using an experimental design
-Intensity_columns <- grep("Intensity_", colnames(data)) # To get Intensity column numbers
+# Generate a SummarizedExperiment object using the experimental design
+Intensity_columns <- grep("Intensity.", colnames(data)) # To get Intensity column numbers
 experimental_design <- design
 data_se <- make_se(data, Intensity_columns, experimental_design)
 
@@ -67,7 +119,7 @@ data_se <- make_se(data, Intensity_columns, experimental_design)
 data_se
 
 ## ----plot_data_noFilt, fig.width = 4, fig.height = 4--------------------------
-# Plot a barplot of the protein identification overlap between samples
+# Plot a barplot of the peptide identification overlap between samples
 plot_frequency(data_se)
 
 ## ----filter_missval-----------------------------------------------------------
@@ -75,18 +127,18 @@ plot_frequency(data_se)
 data_filt_strict <- filter_missval(data_se, thr = 0)
 
 # Less stringent filtering:
-# Filter for proteins that are identified in 3 out of 4 replicates of at least one condition (thr = number of allowed missing values). Use this option for downstream analysis
+# Filter for proteins that are identified in 3 out of 4 replicates of at least one condition (thr = number of allowed missing values). Use this option for downstream analysis 
 data_filt <- filter_missval(data_se, thr = 1)
 
 ## ----plot_data, fig.width = 4, fig.height = 4---------------------------------
-# Plot a barplot of the number of identified proteins per samples
+# Plot a barplot of the number of identified peptides per samples
 plot_numbers(data_filt)
 
 ## ----plot_data2, fig.width = 3, fig.height = 4--------------------------------
-# Plot a barplot of the protein identification overlap between samples
+# Plot a barplot of the peptide identification overlap between samples
 plot_coverage(data_filt)
 
-## ----normalize----------------------------------------------------------------
+## ----normalize data-----------------------------------------------------------
 # Normalize the data
 data_norm <- normalize_vsn(data_filt)
 
@@ -95,11 +147,11 @@ data_norm <- normalize_vsn(data_filt)
 plot_normalization(data_filt, data_norm)
 
 ## ----plot_missval, fig.height = 4, fig.width = 3------------------------------
-# Plot a heatmap of proteins with missing values
+# Plot a heatmap of peptides with missing values
 plot_missval(data_filt)
 
 ## ----plot_detect, fig.height = 4, fig.width = 4-------------------------------
-# Plot intensity distributions and cumulative fraction of proteins with and without missing values
+# Plot intensity distributions and cumulative fraction of peptides with and without missing values
 plot_detect(data_filt)
 
 ## ----impute, results = "hide", message = FALSE, warning = FALSE, error = TRUE----
@@ -115,16 +167,15 @@ data_imp_man <- impute(data_norm, fun = "man", shift = 1.8, scale = 0.3)
 # Impute missing data using the k-nearest neighbour approach (for MAR)
 # data_imp_knn <- impute(data_norm, fun = "knn", rowmax = 0.9)
 
-
 ## ----plot_imp, fig.width = 4, fig.height = 4----------------------------------
-# Plot intensity distributions before and after imputation
+# Plot intensity distributions before and after imputation. The effect of the imputation on the distributions can be visualized here 
 plot_imputation(data_norm, data_imp)
 plot_imputation(data_norm, data_imp_man)
 
 ## ----statistics---------------------------------------------------------------
-# Differential enrichment analysis  based on linear models and empherical Bayes statistics
+# Differential enrichment analysis  based on linear models and empirical Bayes statistics
 
-# Test every sample versus control
+# Test every sample versus control (define value of control)
 data_diff <- test_diff(data_imp, type = "control", control = "MOCK")
 
 # Test all possible comparisons of samples
@@ -135,8 +186,8 @@ data_diff <- test_diff(data_imp, type = "control", control = "MOCK")
 #                              test = c("Ubi4_vs_Ctrl", "Ubi6_vs_Ctrl"))
 
 ## ----add_reject---------------------------------------------------------------
-# Denote significant proteins based on user defined cutoffs
-dep <- add_rejections(data_diff, alpha = 0.05, lfc = log2(1.5))
+# Denote significant peptides based on user defined cutoffs
+dep <- add_rejections(data_diff, alpha = 0.01, lfc = log2(2))
 
 ## ----pca, fig.height = 3, fig.width = 4---------------------------------------
 # Plot the first and second principal components
@@ -147,31 +198,33 @@ plot_pca(dep, x = 1, y = 2, n = 500, point_size = 4)
 plot_cor(dep, significant = TRUE, lower = 0, upper = 1, pal = "Reds")
 
 ## ----heatmap, fig.height = 5, fig.width = 3-----------------------------------
-# Plot a heatmap of all significant proteins with the data centered per protein
+# Plot a heatmap of all significant peptides with the data centered per protein
 plot_heatmap(dep, type = "centered", kmeans = TRUE, 
              k = 6, col_limit = 4, show_row_names = FALSE,
              indicate = c("condition", "replicate"))
 
 ## ----heatmap2, fig.height = 5, fig.width = 3----------------------------------
-# Plot a heatmap of all significant proteins (rows) and the tested contrasts (columns)
+# Plot a heatmap of all significant peptides (rows) and the tested contrasts (columns)
 plot_heatmap(dep, type = "contrast", kmeans = TRUE, 
              k = 6, col_limit = 10, show_row_names = FALSE)
 
 ## ----volcano, fig.height = 5, fig.width = 5-----------------------------------
-# Plot a volcano plot for the contrast "ATP_10_mM vs MOCK""
-plot_volcano(dep, contrast = "10mM_ATP_vs_MOCK", label_size = 2, add_names = FALSE)
+# Plot a volcano plot for the contrast "Phe_C1 vs MOCK""
+plot_volcano(dep, contrast = "Phe_C1_vs_MOCK", label_size = 2, add_names = FALSE)
+#plot_volcano(dep, contrast = "Phe_C1_vs_MOCK", label_size = 2, add_names = TRUE)
 
-# Plot a volcano plot for the contrast "ATP_25_mM vs MOCK""
-plot_volcano(dep, contrast = "25mM_ATP_vs_MOCK", label_size = 2, add_names = FALSE)
+# Plot a volcano plot for the contrast "Phe_C2 vs MOCK""
+plot_volcano(dep, contrast = "Phe_C2_vs_MOCK", label_size = 2, add_names = FALSE)
+#plot_volcano(dep, contrast = "Phe_C2_vs_MOCK", label_size = 2, add_names = TRUE)
 
 ##
 # Check important peptides to show as examples
 ## ----bar, fig.height = 3.5, fig.width = 3.5-----------------------------------
-# Plot a barplot for USP15 and IKBKG
-#plot_single(dep, proteins = c("USP15", "IKBKG"))
+# Plot a barplot for P08312_ADHDTFWFDTT and P0AB91_ELLPPVAL
+plot_single(dep, proteins = c("P08312_ADHDTFWFDTT", "P0AB91_ELLPPVAL"))
 
-# Plot a barplot for the protein USP15 with the data centered
-#plot_single(dep, proteins = "USP15", type = "centered")
+# Plot a barplot for the peptide P08312_ADHDTFWFDTT with the data centered
+plot_single(dep, proteins = "P08312_ADHDTFWFDTT", type = "centered")
 
 ##
 
